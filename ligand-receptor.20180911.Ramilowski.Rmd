@@ -1,0 +1,338 @@
+
+#Ligand-receptor analysis for Germ cells and Somatic cells (using ligand/receptor interaction data from Ramilowski_2015)
+
+
+567 Receptors
+586 Ligands
+2015 Interactions
+
+##1. Select highly variable genes from somatic and germline clusters clusters using Jun's code
+```{r}
+soma.mean <- as.matrix(read.table("~/Research/SingleCell/ligandReceptor/MouseAdultST25_7SomaticCellTypes_Centroids_Qianyi.txt",header = T,sep="\t",row.names = 1))
+germ.mean <- as.matrix(read.table("~/Research/SingleCell/ligandReceptor/12GermCellClusters_Centroids_Qianyi.txt",header = T,sep="\t",row.names = 1))
+germ.mean <- germ.mean[-c(1,2),] #remove nGenes and nCells
+##data source: https://umich.app.box.com/folder/31463886658
+##First 1-Mar and 2-Mar are removed because of duplicates.
+cell.attributes <- read.table("~/Research/SingleCell/ligandReceptor/GSE112393_MergedAdultMouseST25_PerCellAttributes.txt",skip=3,header = F,sep="\t")
+```
+
+```{r}
+g.mean<-apply(germ.mean,1,mean)
+g.var<-apply(germ.mean,1,var)
+
+s.mean <- apply(soma.mean,1,mean)
+s.var <- apply(soma.mean,1,var)
+
+plot(g.mean,g.var/(g.mean),cex=0.5,ylim=c(0,3),main="Germ cell")
+abline(h=0.2)
+abline(v=0.2)
+
+plot(s.mean,s.var/(s.mean),cex=0.5,ylim=c(0,3),main="Somatic cell")
+abline(h=0.2)
+abline(v=0.2)
+
+filter.g<-(g.mean>0.2)&( g.var/g.mean>0.2)
+sum(filter.g)
+filter.s<-(s.mean>0.2)&( s.var/s.mean>0.2)
+sum(filter.s)
+```
+
+```{r}
+somaGenes <- rownames(soma.mean)[filter.s]
+germGenes <- rownames(germ.mean)[filter.g]
+```
+
+##2. Read in Ligand and Receptor data
+```{r}
+lrinter <- read.table("~/Research/SingleCell/ligandReceptor/20180912/Ramilowski_et_al_2015/LR.pairs.Mouse.txt",header = FALSE)
+ligands <- unique(lrinter$V1)
+receptors <- unique(lrinter$V2)
+```
+
+##3. Extract Ligands and Receptors from Germline and Sertoli cells
+```{r}
+germ.ligands <- intersect(germGenes,ligands)
+germ.receptors <- intersect(germGenes,receptors)
+soma.ligands <- intersect(somaGenes,ligands)
+soma.receptors <- intersect(somaGenes,receptors)
+length(germ.ligands) #Number of ligands in germline cells
+## [1] 23
+length(germ.receptors) #Number of receptors in germline cells
+## [1] 12
+length(soma.ligands) #Number of ligands in somatic cells
+## [1] 113
+length(soma.receptors) #Number of receptors in somatic cells
+## [1] 114
+```
+
+##4. Find ligand receptor pairs from highly variable genes
+```{r}
+ligrec <- function(ligands,receptors){
+  lig.rec.pairs <- c()
+  for(i in ligands){
+    rec.db <- lrinter[lrinter[,1]==i,2]
+    recs <- intersect(rec.db,receptors)
+    for(j in recs){
+      lig.rec.pairs <- rbind(lig.rec.pairs,c(i,j))
+    }
+  }
+  return(lig.rec.pairs)
+}
+lig.rec.germ.soma <- ligrec(germ.ligands,soma.receptors)
+lig.rec.soma.germ <- ligrec(soma.ligands,germ.receptors)
+lig.rec.soma.soma <- ligrec(soma.ligands,soma.receptors)
+dim(lig.rec.germ.soma)[1] # Number of pairs for Ligand(Germ)-Receptor(Soma)
+## [1] 34
+dim(lig.rec.soma.germ)[1] # Number of pairs for Ligand(Soma)-Receptor(Germ)
+## [1] 29
+dim(lig.rec.soma.soma)[1] # Number of pairs for Ligand(Soma)-Receptor(Soma)
+## [1] 176
+```
+
+##7. Use multiplication of expression values as interaction score
+```{r}
+mulInt <- function(inters, ligandexp, receptorexp){
+  summatrix <- matrix(0, nrow = dim(ligandexp)[2], ncol = dim(receptorexp)[2])
+  for(i in c(1:dim(inters)[1])){
+    #c(lig,rec) <- inters[i,]
+    lig <- inters[i,1]
+    rec <- inters[i,2]
+    summatrix <- summatrix + ligandexp[lig,] %*% t(receptorexp[rec,])
+  }
+  rownames(summatrix) <- c(1:dim(summatrix)[1])
+  colnames(summatrix) <- c(1:dim(summatrix)[2])
+  return(summatrix)
+}
+lig.rec.germ.soma.mul <- mulInt(lig.rec.germ.soma, germ.mean, soma.mean)
+lig.rec.soma.germ.mul <- mulInt(lig.rec.soma.germ, soma.mean, germ.mean)
+lig.rec.soma.soma.mul <- mulInt(lig.rec.soma.soma, soma.mean, soma.mean)
+```
+
+```{r}
+library(ComplexHeatmap)
+```
+
+```{r}
+soma.lab <- c("InnateLymphoid","Macrophage","Endothelial","Myoid","Leydig","Sertoli","Unknown")
+colnames(lig.rec.germ.soma.mul) <- soma.lab
+rownames(lig.rec.soma.germ.mul) <- soma.lab
+rownames(lig.rec.soma.soma.mul) <- soma.lab
+colnames(lig.rec.soma.soma.mul) <- soma.lab
+Heatmap(lig.rec.germ.soma.mul, cluster_rows = FALSE, cluster_columns = FALSE)## Ligands in Germ cells and Receptors in Somatic cells
+Heatmap(lig.rec.soma.germ.mul, cluster_rows = FALSE, cluster_columns = FALSE) ## Ligands in Somatic cells and receptors in Germ cells.
+Heatmap(lig.rec.soma.soma.mul, cluster_rows = FALSE, cluster_columns = FALSE)## Ligands in Somatic cells and receptors in Somatic cells.
+```
+##8. Interaction plot
+```{r}
+library(plotrix)
+library(shape)
+```
+
+Calculate score, rank score and select high interactions
+```{r eval=FALSE}
+germ.lab <- c(1:12)
+soma.lab <- c("InnateLymphoid","Macrophage","Endothelial","Myoid","Leydig","Sertoli","Unknown")
+lig.lab <- germ.lab
+rec.lab <- soma.lab
+lig.label <- "Germ"
+rec.label <- "Soma"
+int.plot <- function(lig.rec, lig.mean, rec.mean, lig.lab, rec.lab, lig.label, rec.label,lineup,perc,filename){
+pdf(filename,width = 6*lineup[2],height = 6*lineup[1])
+par(mfrow=lineup)
+for(ind in c(1:dim(lig.rec[,])[1])){
+perc=perc
+expmat <- mulInt(matrix(lig.rec[ind,],nrow = 1),lig.mean,rec.mean)
+expframe <- as.data.frame(as.table(expmat))
+expframe.sort <- expframe[order(expframe$Freq,decreasing = TRUE),]
+expframe.sel <- expframe.sort[c(1:floor(dim(expframe.sort)[1]*perc)),]
+lig.len = dim(lig.mean)[2]
+rec.len = dim(rec.mean)[2]
+plot(1, type="n", xlab="", ylab="", xlim=c(0, 12), ylim=c(0, max(lig.len,rec.len)+3),axes = FALSE) ##axes2 = FALSE
+lig.exp = lig.mean[lig.rec[ind,1],]
+rec.exp = rec.mean[lig.rec[ind,2],]
+
+for(i in c(1:lig.len)){
+  if(lig.len >= rec.len){
+    h = i
+  }else{
+    h = i + ceiling((rec.len-lig.len)/2)
+  }
+  draw.circle(3.5,h,(1/(1.5*pi))/max(lig.exp)*rev(lig.exp)[i],border = "#5a97e3",col = "#5a97e3")
+  text(3,h,labels = rev(lig.lab)[i],cex=1.2, adj=c(1,0.5))
+}
+text(3.5,max(lig.len,rec.len)+1.2,paste0(lig.label,"\n(ligand)"),cex=1.5)
+for(i in c(1:rec.len)){
+  if(lig.len <= rec.len){
+    h = i
+  }else{
+    h = i+ceiling((lig.len-rec.len)/2)
+  }
+  draw.circle(8.5,h,(1/(1.5*pi))/max(rec.exp)*rev(rec.exp)[i],border = "#e3a65a",col = "#e3a65a")
+  text(8.8,h,label = rev(rec.lab)[i],cex=1.2, adj=c(0,0.5))
+}
+text(8.5,max(lig.len,rec.len)+1.2,paste0(rec.label,"\n(receptor)"),cex = 1.5)
+shrink = 0.92
+for(i in c(1:dim(expframe.sel)[1])){
+  if(lig.len >= rec.len){
+    h1 = lig.len + 1
+    #h2 = lig.len + 1 - floor((lig.len - rec.len)/2)
+  }else{
+    #h2 = rec.len + 1
+    h1 = lig.len + 1 + ceiling((rec.len - lig.len)/2)
+    #h2 = rec.len + 1
+    #h1 = rec.len + 1
+  }
+  headx = 3.3+shrink*(5-0.6)
+  heady = h1-as.numeric(expframe.sel[i,1]) + shrink*(as.numeric(expframe.sel[i,1]) - sign(lig.len - rec.len)*floor(abs(lig.len - rec.len)/2) - as.numeric(expframe.sel[i,2]))
+  Arrows(3.8,h1-as.numeric(expframe.sel[i,1]),headx,heady,lwd = 5/max(expframe.sel[,3])*expframe.sel[i,3])
+}
+text(6,max(lig.len,rec.len)+2.4,paste(lig.rec[ind,1],lig.rec[ind,2],sep = "-"),cex=2)
+}
+dev.off()
+}
+```
+
+```{r eval=FALSE}
+int.plot(lig.rec.germ.soma, lig.mean = germ.mean, rec.mean = soma.mean, lig.lab = germ.lab, rec.lab = soma.lab, lig.label = "Germ", rec.label = "Soma",lineup = c(9,4), perc=0.1,filename="~/Research//SingleCell/ligandReceptor/20180912/Ramilowski_et_al_2015/lig.rec.germ.soma.pdf")
+int.plot(lig.rec.soma.germ, lig.mean = soma.mean, rec.mean = germ.mean, lig.lab = soma.lab, rec.lab = germ.lab, lig.label = "Soma", rec.label = "Germ",lineup = c(10,3), perc=0.1,filename="~/Research//SingleCell/ligandReceptor/20180912/Ramilowski_et_al_2015/lig.rec.soma.germ.pdf")
+int.plot(lig.rec.soma.soma, lig.mean = soma.mean, rec.mean = soma.mean, lig.lab = soma.lab, rec.lab = soma.lab, lig.label = "Soma", rec.label = "Soma",lineup = c(44,4), perc=0.1,filename="~/Research//SingleCell/ligandReceptor/20180912/Ramilowski_et_al_2015/lig.rec.soma.soma.pdf")
+```
+##9. Intersect the small dataset and the large dataset
+```{r}
+lrinter.s <- read.table("~/Research/SingleCell/ligandReceptor/mouseLigRecInt.txt",header = FALSE)
+int.s <- paste(lrinter.s$V1,lrinter.s$V2,sep="-")
+int.l <- paste(lrinter$V1,lrinter$V2,sep="-")
+length(int.s)
+length(int.l)
+length(intersect(int.s,int.l))  ##All of the interactions that are in the small dataset but not in the large dataset was caused by multiple orthologues in mouse. One-to-many correspondence genes are removed from the large dataset.
+```
+
+
+Filter the dataset 
+```{r}
+lr.genes <- c(as.character(ligands), as.character(receptors))
+intgene <- intersect(lr.genes,intersect(rownames(soma.mean),rownames(germ.mean)))
+length(intgene)
+soma.mean.lr <- soma.mean[intgene,]
+germ.mean.lr <- germ.mean[intgene,]
+```
+```{r}
+g.mean.lr<-apply(germ.mean.lr,1,mean)
+g.var.lr<-apply(germ.mean.lr,1,var)
+
+s.mean.lr <- apply(soma.mean.lr,1,mean)
+s.var.lr <- apply(soma.mean.lr,1,var)
+
+plot(g.mean.lr,g.var.lr/(g.mean.lr),cex=0.5,ylim=c(0,3),main="Germ cell")
+abline(h=0.2)
+abline(v=0.2)
+
+plot(s.mean.lr,s.var.lr/(s.mean.lr),cex=0.5,ylim=c(0,3),main="Somatic cell")
+abline(h=0.2)
+abline(v=0.2)
+
+filter.g<-(g.mean.lr>0.2)&( g.var.lr/g.mean.lr>0.2)
+sum(filter.g)
+filter.s<-(s.mean.lr>0.2)&( s.var.lr/s.mean.lr>0.2)
+sum(filter.s)
+```
+```{r}
+bivariate_plot <- function(df, var1, var2, density = T, box = F) {
+  require(ggplot2)
+  require(cowplot)
+  scatter = ggplot(df, aes_string(var1, var2)) +
+    geom_point(alpha=.8, color = "red")
+
+  plot1 = ggplot(df, aes_string(var1)) + geom_density(alpha=.5, fill = "red") 
+  plot1 = plot1 + ylab("G1 density")
+
+  plot2 = ggplot(df, aes_string(var2)) + geom_density(alpha=.5, fill = "red") 
+  plot2 = plot2 + ylab("G2 density")
+
+  # Avoid displaying duplicated legend
+  plot1 = plot1 + theme(legend.position="none")
+  plot2 = plot2 + theme(legend.position="none")
+
+  # Homogenize scale of shared axes
+  min_exp = min(df[[var1]], df[[var2]]) - 0.01
+  max_exp = max(df[[var1]], df[[var2]]) + 0.01
+  scatter = scatter + ylim(min_exp, max_exp)
+  scatter = scatter + xlim(min_exp, max_exp)
+  plot1 = plot1 + xlim(min_exp, max_exp)
+  plot2 = plot2 + xlim(min_exp, max_exp)
+  plot1 = plot1 + ylim(0, 2)
+  plot2 = plot2 + ylim(0, 2)
+
+  # Flip axis of gg_dist_g2
+  plot2 = plot2 + coord_flip()
+
+  # Remove some duplicate axes
+  plot1 = plot1 + theme(axis.title.x=element_blank(),
+                        axis.text=element_blank(),
+                        axis.line=element_blank(),
+                        axis.ticks=element_blank())
+
+  plot2 = plot2 + theme(axis.title.y=element_blank(),
+                        axis.text=element_blank(),
+                        axis.line=element_blank(),
+                        axis.ticks=element_blank())
+
+  # Modify margin c(top, right, bottom, left) to reduce the distance between plots
+  #and align G1 density with the scatterplot
+  plot1 = plot1 + theme(plot.margin = unit(c(0.5, 0, 0, 0.7), "cm"))
+  scatter = scatter + theme(plot.margin = unit(c(0, 0, 0.5, 0.5), "cm"))
+  plot2 = plot2 + theme(plot.margin = unit(c(0, 0.5, 0.5, 0), "cm"))
+
+  # Combine all plots together and crush graph density with rel_heights
+  perfect = plot_grid(plot1, NULL, scatter, plot2,
+                      ncol = 2, rel_widths = c(3, 1), rel_heights = c(1, 3))
+
+  print(perfect)
+}
+
+#bivariate_plot(df = df_exp, var1 = "var1", var2 = "var2")
+```
+
+```{r}
+df.soma <- data.frame("mean" = s.mean.lr,"var.mean" = s.var.lr/s.mean.lr)
+df.germ <- data.frame("mean" = g.mean.lr,"var.mean" = g.var.lr/g.mean.lr)
+bivariate_plot(df = df.germ, var1 = "mean", var2 = "var.mean")
+bivariate_plot(df = df.soma, var1 = "mean", var2 = "var.mean")
+```
+
+Total expression level
+```{r}
+ncells.soma <- c(64,139,179,49,314,2131,2205)
+ncells.germ <- c(2003,132,61,2705,1091,2013,1656,264,3168,2764,1894,2895)
+germ.tot <- log(t(t(germ.mean) * ncells.germ)+1)
+soma.tot <- log(t(t(soma.mean) * ncells.soma)+1)
+germ.tot.lr <- germ.tot[intgene,]
+soma.tot.lr <- soma.tot[intgene,]
+```
+
+```{r}
+g.mean.t.lr<-apply(germ.tot.lr,1,mean)
+g.var.t.lr<-apply(germ.tot.lr,1,var)
+
+s.mean.t.lr <- apply(soma.tot.lr,1,mean)
+s.var.t.lr <- apply(soma.tot.lr,1,var)
+
+plot(g.mean.t.lr,g.var.t.lr/(g.mean.t.lr),cex=0.5,ylim=c(0,3),main="Germ cell")
+abline(h=0.2)
+abline(v=0.2)
+
+plot(s.mean.t.lr,s.var.t.lr/(s.mean.t.lr),cex=0.5,ylim=c(0,3),main="Somatic cell")
+abline(h=0.2)
+abline(v=0.2)
+
+filter.g<-(g.mean.t.lr>0.2)&( g.var.t.lr/g.mean.t.lr>0.2)
+sum(filter.g)
+filter.s<-(s.mean.t.lr>0.2)&( s.var.t.lr/s.mean.t.lr>0.2)
+sum(filter.s)
+
+df.germ.tot <- data.frame("mean" = g.mean.t.lr, "var.mean" = g.var.t.lr)
+df.soma.tot <- data.frame("mean" = s.mean.t.lr, "var.mean" = s.var.t.lr)
+bivariate_plot(df = df.germ.tot, var1 = "mean", var2 = "var.mean")
+bivariate_plot(df = df.soma.tot, var1 = "mean", var2 = "var.mean")
+```
+
